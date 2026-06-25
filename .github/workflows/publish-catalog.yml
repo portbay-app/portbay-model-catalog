@@ -1,0 +1,83 @@
+name: Publish model catalog
+
+# Signs model-catalog.json with the PortBay updater (minisign) key — the SAME
+# key that signs app updates — and publishes it plus its detached `.sig` to the
+# rolling `latest` release. That is the exact URL the desktop app fetches:
+#
+#   src-tauri/src/commands/model_catalog.rs
+#     MANIFEST_URL  = .../portbay-model-catalog/releases/latest/download/model-catalog.json
+#     SIGNATURE_URL = .../portbay-model-catalog/releases/latest/download/model-catalog.json.sig
+#
+# The app verifies the signature against UPDATER_PUBKEY BEFORE parsing the JSON
+# (commands/runtimes.rs UPDATER_PUBKEY). A forged or unsigned manifest is
+# rejected and the app silently falls back to its disk cache, then the bundled
+# default-model-catalog.json — it never serves unverified bytes.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths: ["model-catalog.json"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-catalog
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate manifest
+        run: |
+          node -e '
+            const c = require("./model-catalog.json");
+            if (c.schemaVersion !== 1) throw new Error("schemaVersion must be 1, got " + c.schemaVersion);
+            for (const k of ["stt", "tts", "image"]) {
+              if (c[k] !== undefined && !Array.isArray(c[k])) throw new Error(k + " must be an array");
+            }
+            const ids = [...(c.stt||[]), ...(c.tts||[]), ...(c.image||[])].map(m => m.id);
+            const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
+            if (dupes.length) throw new Error("duplicate ids: " + [...new Set(dupes)].join(", "));
+            for (const m of [...(c.stt||[]), ...(c.tts||[]), ...(c.image||[])]) {
+              if (!m.id || !m.engine || !m.repoModel) throw new Error("entry missing id/engine/repoModel: " + JSON.stringify(m).slice(0,120));
+            }
+            console.log("ok:", (c.stt||[]).length, "stt,", (c.tts||[]).length, "tts,", (c.image||[]).length, "image");
+          '
+
+      - name: Sign manifest (minisign via tauri signer)
+        env:
+          TAURI_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is not set — add the PortBay updater private key to repo secrets."
+            exit 1
+          fi
+          npx --yes @tauri-apps/cli@latest signer sign \
+            --private-key "$TAURI_KEY" \
+            --password "${TAURI_KEY_PASSWORD:-}" \
+            model-catalog.json
+          test -f model-catalog.json.sig || { echo "::error::signing did not produce model-catalog.json.sig"; exit 1; }
+          echo "signature bytes: $(wc -c < model-catalog.json.sig)"
+
+      - name: Publish to rolling latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Rolling single release: GitHub's /releases/latest/download/<asset>
+          # always resolves to the newest release, so we replace it in place.
+          gh release delete catalog-latest --cleanup-tag --yes 2>/dev/null || true
+          gh release create catalog-latest \
+            model-catalog.json model-catalog.json.sig \
+            --latest \
+            --title "Model catalog (latest)" \
+            --notes "Signed PortBay model catalog — consumed by the desktop app at releases/latest/download/model-catalog.json. Published $(date -u +%Y-%m-%dT%H:%M:%SZ)."

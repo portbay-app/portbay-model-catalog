@@ -1,0 +1,8 @@
+# Signing output (produced in CI, never committed)
+*.sig
+*.minisig
+
+# Tooling
+node_modules/
+.DS_Store
+*.log
