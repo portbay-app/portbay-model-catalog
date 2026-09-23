@@ -44,18 +44,6 @@
       "licenseUrl": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2"
     },
     {
-      "id": "cohere-transcribe",
-      "engine": "cohere",
-      "displayName": "Cohere Transcribe",
-      "repoModel": "cohere-transcribe-03-2026-coreml",
-      "approxSizeBytes": 1400000000,
-      "languages": "14 languages",
-      "speedNote": "Cohere's on-device transcription model (March 2026) — strong multilingual accuracy.",
-      "recommended": false,
-      "streaming": false,
-      "licenseUrl": "https://huggingface.co/FluidInference"
-    },
-    {
       "id": "nemotron-streaming",
       "engine": "nemotron",
       "displayName": "Nemotron Speech 3.5 (English)",
